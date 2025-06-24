@@ -28,9 +28,135 @@ const quranVerses = [
 	}
 ];
 
-function showRandomVerse() {
-	const verse = quranVerses[Math.floor(Math.random() * quranVerses.length)];
-	vscode.window.showInformationMessage(`${verse.arabic}\n${verse.translation}`);
+// Types for verse history and memorization
+interface VerseHistoryItem {
+	timestamp: number;
+	verseIndex: number;
+	status: 'memorized' | 'pending';
+}
+
+const HISTORY_KEY = 'quranReminder.verseHistory';
+const STATUS_KEY = 'quranReminder.verseStatus';
+
+function getReminderInterval(): number {
+	// Get interval in minutes from config, default to 60
+	const config = vscode.workspace.getConfiguration('quranReminder');
+	return (config.get<number>('reminderInterval') || 60) * 60 * 1000;
+}
+
+function getVerseStatus(context: vscode.ExtensionContext): Record<number, 'memorized' | 'pending'> {
+	return context.globalState.get<Record<number, 'memorized' | 'pending'>>(STATUS_KEY, {});
+}
+
+function setVerseStatus(context: vscode.ExtensionContext, status: Record<number, 'memorized' | 'pending'>) {
+	context.globalState.update(STATUS_KEY, status);
+}
+
+function getVerseHistory(context: vscode.ExtensionContext): VerseHistoryItem[] {
+	return context.globalState.get<VerseHistoryItem[]>(HISTORY_KEY, []);
+}
+
+function addVerseToHistory(context: vscode.ExtensionContext, verseIndex: number) {
+	const history = getVerseHistory(context);
+	history.unshift({ timestamp: Date.now(), verseIndex, status: getVerseStatus(context)[verseIndex] || 'pending' });
+	context.globalState.update(HISTORY_KEY, history.slice(0, 50)); // keep last 50
+}
+
+function showRandomVerse(context: vscode.ExtensionContext) {
+	const verseIndex = Math.floor(Math.random() * quranVerses.length);
+	const verse = quranVerses[verseIndex];
+	addVerseToHistory(context, verseIndex);
+	vscode.window.showInformationMessage(`${verse.arabic}\n${verse.translation}`, 'Mark as Memorized', 'Mark as Pending').then(selection => {
+		if (selection) {
+			const status = getVerseStatus(context);
+			status[verseIndex] = selection === 'Mark as Memorized' ? 'memorized' : 'pending';
+			setVerseStatus(context, status);
+		}
+	});
+}
+
+function showHistory(context: vscode.ExtensionContext) {
+	const history = getVerseHistory(context);
+	if (history.length === 0) {
+		vscode.window.showInformationMessage('No verse history yet.');
+		return;
+	}
+	const status = getVerseStatus(context);
+	const items = history.map(item => {
+		const verse = quranVerses[item.verseIndex];
+		return {
+			label: `${verse.arabic}`,
+			description: `${verse.translation}`,
+			detail: `Status: ${status[item.verseIndex] || 'pending'} | ${new Date(item.timestamp).toLocaleString()}`,
+			verseIndex: item.verseIndex
+		};
+	});
+	vscode.window.showQuickPick(items, { placeHolder: 'Past Quranic verses shown as reminders', canPickMany: false }).then(selected => {
+		if (selected) {
+			vscode.window.showInformationMessage(
+				`${quranVerses[selected.verseIndex].arabic}\n${quranVerses[selected.verseIndex].translation}`,
+				'Mark as Memorized', 'Mark as Pending'
+			).then(selection => {
+				if (selection) {
+					const status = getVerseStatus(context);
+					status[selected.verseIndex] = selection === 'Mark as Memorized' ? 'memorized' : 'pending';
+					setVerseStatus(context, status);
+				}
+			});
+		}
+	});
+}
+
+function showSettings(context: vscode.ExtensionContext) {
+	const config = vscode.workspace.getConfiguration('quranReminder');
+	const currentInterval = config.get<number>('reminderInterval') || 60;
+	vscode.window.showInputBox({
+		prompt: 'Set reminder interval in minutes',
+		value: currentInterval.toString(),
+		validateInput: v => isNaN(Number(v)) || Number(v) < 1 ? 'Enter a positive number' : undefined
+	}).then(val => {
+		if (val) {
+			config.update('reminderInterval', Number(val), vscode.ConfigurationTarget.Global);
+			vscode.window.showInformationMessage(`Reminder interval set to ${val} minutes.`);
+		}
+	});
+}
+
+function openReminderPanel(context: vscode.ExtensionContext) {
+	const panel = vscode.window.createWebviewPanel(
+		'quranReminderPanel',
+		'Quran Reminder',
+		vscode.ViewColumn.One,
+		{
+			enableScripts: true,
+			localResourceRoots: [vscode.Uri.file(path.join(context.extensionPath, 'src'))]
+		}
+	);
+
+	const htmlPath = path.join(context.extensionPath, 'src', 'reminderPanel.html');
+	let html = fs.readFileSync(htmlPath, 'utf8');
+	// Optionally inject script/css URIs if needed
+	panel.webview.html = html;
+
+	// Handle messages from the Webview
+	panel.webview.onDidReceiveMessage(async (message) => {
+		switch (message.command) {
+			case 'getVerse':
+				// TODO: Fetch verse from API or local cache
+				panel.webview.postMessage({ command: 'verse', data: {/* verse data */} });
+				break;
+			case 'saveNote':
+				// TODO: Save note/tag for verse
+				break;
+			case 'setPreference':
+				// TODO: Save user preferences
+				break;
+			case 'getProgress':
+				// TODO: Send progress data
+				break;
+			// Add more cases as needed
+		}
+	});
 }
 
 let interval: NodeJS.Timeout | undefined;
@@ -43,23 +169,39 @@ export function activate(context: vscode.ExtensionContext) {
 	console.log('Congratulations, your extension "quranReminder" is now active!');
 
 	// Show a verse immediately on activation
-	showRandomVerse();
+	showRandomVerse(context);
 
-	// Set up an hourly reminder (3600000 ms = 1 hour)
-	interval = setInterval(() => {
-		showRandomVerse();
-	}, 3600000);
+	// Set up a reminder with customizable interval
+	function startReminder() {
+		if (interval) clearInterval(interval);
+		interval = setInterval(() => {
+			showRandomVerse(context);
+		}, getReminderInterval());
+	}
+	startReminder();
 
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('quranReminder.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from quran-memorization-reminder!');
+	// Listen for config changes
+	vscode.workspace.onDidChangeConfiguration(e => {
+		if (e.affectsConfiguration('quranReminder.reminderInterval')) {
+			startReminder();
+		}
 	});
 
-	context.subscriptions.push(disposable);
+	// Register commands
+	context.subscriptions.push(
+		vscode.commands.registerCommand('quranReminder.helloWorld', () => {
+			vscode.window.showInformationMessage('Hello World from quran-memorization-reminder!');
+		}),
+		vscode.commands.registerCommand('quranReminder.showHistory', () => {
+			showHistory(context);
+		}),
+		vscode.commands.registerCommand('quranReminder.openSettings', () => {
+			showSettings(context);
+		}),
+		vscode.commands.registerCommand('quranReminder.openReminderPanel', () => {
+			openReminderPanel(context);
+		})
+	);
 }
 
 // This method is called when your extension is deactivated

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quran Reminder</title>
+  <style>
+    body {
+      font-family: var(--font, Arial, sans-serif);
+      background: var(--bg, #f5f5f5);
+      color: #222;
+      margin: 0;
+      padding: 0 1.5em;
+      transition: background 0.3s, color 0.3s;
+    }
+    .customization {
+      margin: 1em 0;
+      display: flex;
+      gap: 1em;
+      align-items: center;
+    }
+    .verse-box {
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+      padding: 1.5em;
+      margin: 1em 0;
+      text-align: center;
+    }
+    .arabic {
+      font-size: 2em;
+      margin-bottom: 0.5em;
+      direction: rtl;
+    }
+    .translation {
+      font-size: 1.1em;
+      color: #555;
+    }
+    .notes {
+      width: 100%;
+      min-height: 60px;
+      margin: 1em 0;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      padding: 0.5em;
+      font-size: 1em;
+    }
+    .progress-bar {
+      width: 100%;
+      background: #eee;
+      border-radius: 6px;
+      overflow: hidden;
+      margin: 1em 0;
+      height: 18px;
+    }
+    .progress {
+      height: 100%;
+      background: #4caf50;
+      width: 0%;
+      transition: width 0.5s;
+    }
+    .actions {
+      display: flex;
+      gap: 1em;
+      margin: 1em 0;
+    }
+    button {
+      padding: 0.5em 1.2em;
+      border: none;
+      border-radius: 4px;
+      background: #1976d2;
+      color: #fff;
+      font-size: 1em;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover {
+      background: #1565c0;
+    }
+    .reminder-settings {
+      margin: 1em 0;
+    }
+  </style>
+</head>
+<body>
+  <h2>Quran Reminder</h2>
+  <div class="customization">
+    <label>Background: <input type="color" id="bgColor"></label>
+    <label>Font: 
+      <select id="fontSelect">
+        <option value="Arial">Arial</option>
+        <option value="Georgia">Georgia</option>
+        <option value="Tahoma">Tahoma</option>
+        <option value="Courier New">Courier New</option>
+      </select>
+    </label>
+    <button id="savePrefs">Save Preferences</button>
+  </div>
+  <div class="verse-box">
+    <div class="arabic" id="verseArabic">Loading...</div>
+    <div class="translation" id="verseTranslation"></div>
+  </div>
+  <textarea class="notes" id="notes" placeholder="Add your notes, tags, or reflections..."></textarea>
+  <div class="actions">
+    <button id="saveNote">Save Note</button>
+    <button id="markMemorized">Mark as Memorized</button>
+    <button id="nextVerse">Next Verse</button>
+  </div>
+  <div class="reminder-settings">
+    <label>Repeat this verse every 
+      <input type="number" id="reminderInterval" min="1" value="60" style="width:60px;"> min
+    </label>
+    <button id="saveReminder">Set Reminder</button>
+  </div>
+  <div class="progress-bar">
+    <div class="progress" id="progress"></div>
+  </div>
+  <div id="progressText"></div>
+  <script>
+    const vscode = acquireVsCodeApi();
+    // Load initial data
+    vscode.postMessage({ command: 'getVerse' });
+    vscode.postMessage({ command: 'getProgress' });
+    // Customization
+    document.getElementById('savePrefs').onclick = () => {
+      const bg = document.getElementById('bgColor').value;
+      const font = document.getElementById('fontSelect').value;
+      document.body.style.setProperty('--bg', bg);
+      document.body.style.setProperty('--font', font);
+      vscode.postMessage({ command: 'setPreference', data: { bg, font } });
+    };
+    // Save note
+    document.getElementById('saveNote').onclick = () => {
+      const note = document.getElementById('notes').value;
+      vscode.postMessage({ command: 'saveNote', data: { note } });
+    };
+    // Mark as memorized
+    document.getElementById('markMemorized').onclick = () => {
+      vscode.postMessage({ command: 'markMemorized' });
+    };
+    // Next verse
+    document.getElementById('nextVerse').onclick = () => {
+      vscode.postMessage({ command: 'getVerse' });
+    };
+    // Set reminder
+    document.getElementById('saveReminder').onclick = () => {
+      const interval = document.getElementById('reminderInterval').value;
+      vscode.postMessage({ command: 'setReminder', data: { interval } });
+    };
+    // Handle messages from extension
+    window.addEventListener('message', event => {
+      const msg = event.data;
+      if (msg.command === 'verse') {
+        document.getElementById('verseArabic').textContent = msg.data.arabic;
+        document.getElementById('verseTranslation').textContent = msg.data.translation;
+        document.getElementById('notes').value = msg.data.note || '';
+      } else if (msg.command === 'progress') {
+        const percent = msg.data.percent || 0;
+        document.getElementById('progress').style.width = percent + '%';
+        document.getElementById('progressText').textContent = `Memorized: ${msg.data.memorized} / ${msg.data.total}`;
+      } else if (msg.command === 'preferences') {
+        document.getElementById('bgColor').value = msg.data.bg || '#f5f5f5';
+        document.getElementById('fontSelect').value = msg.data.font || 'Arial';
+        document.body.style.setProperty('--bg', msg.data.bg || '#f5f5f5');
+        document.body.style.setProperty('--font', msg.data.font || 'Arial');
+      }
+    });
+  </script>
+</body>
+</html> 
